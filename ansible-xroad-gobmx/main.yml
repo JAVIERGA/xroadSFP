@@ -1,0 +1,178 @@
+---
+- hosts: xroadss
+  remote_user: x-road-test
+
+  
+  vars:
+    xroad_home: "{{ ansible_env.PWD }}"  
+    xroad_ui_user: "x-road-test"
+    xroad_ip: "172.16.68.187"
+    
+  environment:
+    HOME: "{{ ansible_env.PWD }}"
+  
+  tasks:
+   - name: Add openjdk repo
+     apt_repository: repo='ppa:openjdk-r' state=present
+     
+     
+
+
+   - name: Update apt packages
+#     become: true
+#     become_method: sudo
+     apt:
+       upgrade: dist
+       update_cache: yes
+       cache_valid_time: 3600        
+
+###################################### GENERIC LIBS ###################################################
+       
+   - name: Install curl,software-properties-common,openjdk-8-jdk, build-essential,git, zip, unzip, debhelper
+     apt: name={{item}} state=installed
+     with_items: 
+       - curl
+       - software-properties-common
+       - openjdk-8-jdk
+       - build-essential
+       - git
+       - zip
+       - unzip
+       - debhelper
+
+
+   - debug: msg="doesn't matter what you do, just that they were talked to previously."
+
+###################################### XROAD REPO CLONE AND BUILD ######################################
+
+
+
+
+#   - name: ensure github is a known host
+#     action: sshknownhosts host=github.com state=present 
+  
+   - name: Clone xroad repo    
+     become_user: "{{ xroad_ui_user }}"
+     become_method: sudo
+     git:
+       repo: https://leviduran:leduto04@github.com/GOBMX/xroad-source.git
+       accept_hostkey: true
+       version: master
+       force: yes
+       dest: "{{ xroad_home }}/xroad-source"
+       
+
+   - debug: msg="{{ansible_env}}"
+
+   - name: Make the user sudoer with no password
+     lineinfile: "dest=/etc/sudoers state=present regexp='^%{{xroad_ui_user}}' line='%{{xroad_ui_user}} ALL=(ALL) NOPASSWD: ALL'"
+
+  
+   - name: execute prepare host script
+     become: true
+     become_user: "{{ xroad_ui_user }}"
+#     become_method: sudo   
+     shell: "{{ xroad_home }}/xroad-source/src/prepare_buildhost.sh "     
+     
+     
+
+   - name: update ruby dependencies
+     shell: "{{ xroad_home }}/xroad-source/src/update_ruby_dependencies.sh chdir={{xroad_home}}/xroad-source/src "     
+       
+
+   - name: clean up gemlock files
+     command: find . -iname Gemfile.lock -exec rm -f {} \;
+
+   - name: execute jgem script
+     shell: "{{ xroad_home }}/xroad-source/remove-jgem-bundler.sh chdir={{xroad_home}}/xroad-source/src "     
+     
+   - name: execute build script
+     shell: "{{ xroad_home }}/xroad-source/src/build_packages.sh chdir={{xroad_home}}/xroad-source/src "     
+
+###################################### ADDITIONAL LIBS #############################################
+
+   - name: Add nginx repo
+     apt_repository: repo='ppa:nginx/stable' state=present
+
+   - name: Update apt packages
+     apt:
+       upgrade: dist
+       update_cache: yes
+       cache_valid_time: 3600        
+
+
+   - name: Install apt-transport-https, apt-utils, net-tools, rlwrap, crudini, ntp,nginx,authbind
+     apt: name={{item}} state=installed
+     with_items: 
+       - apt-transport-https
+       - apt-utils
+       - net-tools
+       - rlwrap
+       - crudini
+       - ntp       
+       - nginx-light
+       - authbind
+
+###################################### INSTALL POSTGRESQL #################################################
+
+   - name: Install postgresql
+     apt: name={{item}} state=installed
+     with_items: 
+       - postgresql
+       - postgresql-contrib
+
+
+
+
+###################################### XROAD SS INSTALLATION #################################################
+
+
+   - name: Install xroad common
+     command: sh -c 'find xroad-common_6.7* | xargs dpkg -i'  chdir="{{xroad_home}}/xroad-source/src/packages"
+     become_method: sudo
+
+   - name: Install xroad jetty
+     command: sh -c 'find xroad-jetty9_6.7.13-1.* | xargs dpkg -i'  chdir="{{xroad_home}}/xroad-source/src/packages"
+     become_method: sudo
+
+   - debconf:
+       name: xroad-proxy
+       question: "{{ item.question }}"
+       vtype: "string"
+       value: "{{ item.value }}"
+     with_items:
+        - { question: "xroad-common/username",           value: "{{ xroad_ui_user }}" }     
+        - { question: "xroad-common/admin-subject",      value: "/CN={{ inventory_hostname }}" }        
+        - { question: "xroad-common/admin-altsubject",   value: "IP:{{ xroad_ip }}" }
+        - { question: "xroad-common/service-subject",    value: "/CN={{ inventory_hostname }}" }
+        - { question: "xroad-common/service-altsubject", value: "IP:{{ xroad_ip }}" }
+
+
+
+       
+
+   - name: Install xroad proxy
+     command: sh -c 'find xroad-proxy_6.7.13* | xargs dpkg -i'  chdir="{{xroad_home}}/xroad-source/src/packages"
+     become_method: sudo
+
+
+   - name: Install xroad addon metaservices
+     command: sh -c 'find xroad-addon-metaservices_6.7* | xargs dpkg -i'  chdir="{{xroad_home}}/xroad-source/src/packages"
+     become_method: sudo
+
+   - name: Install xroad addon messagelog
+     command: sh -c 'find xroad-addon-messagelog_6.7* | xargs dpkg -i'  chdir="{{xroad_home}}/xroad-source/src/packages"
+     become_method: sudo
+
+   - name: Install xroad monitor
+     command: sh -c 'find xroad-monitor_6.7* | xargs dpkg -i'  chdir="{{xroad_home}}/xroad-source/src/packages"
+     become_method: sudo
+
+   - name: Install xroad addon proxymonitor
+     command: sh -c 'find xroad-addon-proxymonitor_6.7* | xargs dpkg -i'  chdir="{{xroad_home}}/xroad-source/src/packages"
+     become_method: sudo
+
+   - name: Install xroad securityserver
+     command: sh -c 'find xroad-securityserver_6.7* | xargs dpkg -i'  chdir="{{xroad_home}}/xroad-source/src/packages"
+     become_method: sudo
+

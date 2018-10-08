@@ -1,0 +1,216 @@
+buildscript {
+   repositories {
+        jcenter()
+    }
+
+    dependencies {
+        classpath 'nl.javadude.gradle.plugins:license-gradle-plugin:0.11.0'
+        classpath 'org.owasp:dependency-check-gradle:1.4.3'
+    }
+}
+
+plugins {
+        id "org.sonarqube" version "2.1-rc3"
+ }
+
+apply plugin: 'idea'
+apply plugin: 'jacoco'
+
+def getRubySourceCheckCommand(def projectPath) {
+    return ["$rootDir/check_ruby_source.sh", "$projectPath"]
+}
+
+repositories {
+    jcenter()
+}
+
+sonarqube {
+    properties {
+        property "sonar.host.url", "http://localhost:9000"
+        property "sonar.projectKey", "xtee6"
+        property "sonar.projectName", "X-Road"
+        property "sonar.projectDescription", "National Data Exchange Layer"
+        property "sonar.projectVersion", "develop"    }
+}
+
+allprojects {
+    apply plugin: 'org.owasp.dependencycheck'
+    dependencyCheck {
+        outputDirectory = "${project.buildDir}/reports/owasp-dependency-check"
+        format = "ALL"
+        analyzers {
+            experimentalEnabled = true
+            archiveEnabled = true
+            jarEnabled = true
+            centralEnabled = true
+            nexusEnabled = false
+            nuspecEnabled = false
+            assemblyEnabled = false
+            pyDistributionEnabled = false
+            pyPackageEnabled = false
+            rubygemsEnabled = true
+            cmakeEnabled = false
+            autoconfEnabled = false
+            composerEnabled = false
+            nodeEnabled = false
+        }
+    }
+
+    sonarqube {
+        properties {
+            property "sonar.dependencyCheck.reportPath", "build/reports/owasp-dependency-check/dependency-check-report.xml"
+        }
+    }
+
+    task allDependencies(type: DependencyReportTask) {}
+}
+
+subprojects {
+    apply plugin: 'eclipse'
+    apply plugin: 'java'
+    apply plugin: 'maven'
+    apply plugin: 'idea'
+    apply plugin: 'checkstyle'
+    apply plugin: 'pmd'
+    apply plugin: 'jacoco'
+    group = 'ee.ria.xroad'
+    version = '1.0'
+
+    jacoco {
+        toolVersion = "0.7.5.201505241946"
+    }
+
+
+    repositories {
+        mavenCentral()
+        mavenLocal()
+
+        // XXX In case mavenCentral is unreachable, use this mirror instead
+        // maven {
+        //     url "http://mirrors.ibiblio.org/pub/mirrors/maven2"
+        // }
+
+        // iaikPkcs11Wrapper is located there
+        //maven {
+        //    url "http://ground.zero.ee/maven2"
+        //}
+    }
+
+    configurations {
+        provided
+    }
+
+    dependencies {
+        testCompile 'junit:junit:4.11'
+
+        provided 'org.projectlombok:lombok:1.16.6'
+    }
+
+    task sourcesJar(type: Jar, dependsOn: classes) {
+        classifier = 'sources'
+        from sourceSets.main.allSource
+    }
+
+    tasks.withType(JavaCompile) {
+        options.encoding = "UTF-8"
+        sourceCompatibility = 1.8
+        targetCompatibility = 1.8
+    }
+
+    tasks.withType(JavaExec) {
+        if (project.hasProperty("args")) {
+            args = project.getProperty("args").tokenize()
+        }
+    }
+
+    task buildall(dependsOn: [build, ':proxy-ui:warble', ':center-ui:warble', ':center-service:warble']) {
+        description = "Builds all that can be built (even the slow tasks)"
+    }
+
+    artifacts {
+        archives sourcesJar
+    }
+
+    sourceSets.main.compileClasspath += configurations.provided
+    sourceSets.test.compileClasspath += configurations.provided
+
+    eclipse {
+        classpath {
+            plusConfigurations += [configurations.provided]
+        }
+    }
+
+    idea {
+        module {
+            scopes.PROVIDED.plus += [configurations.provided]
+        }
+    }
+
+    checkstyle {
+        toolVersion = "6.19"
+        configFile = new File(rootDir, "doc/checkstyle.xml")
+        configProperties.config_loc = "$rootDir/doc"
+        ignoreFailures = false
+        showViolations = true
+    }
+
+    pmd {
+        ignoreFailures = true
+    }
+
+    jacocoTestReport {
+        reports {
+            xml.enabled true
+        }
+    }
+
+    apply plugin: "license"
+
+    license {
+        header rootProject.file('LICENSE.txt')
+        include '**/*.java'
+        include '**/*.rb'
+    }
+
+    jar {
+        from rootProject.file('LICENSE.txt')
+    }
+}
+
+
+configure(subprojects.findAll { it.name.contains('-ui') or it.name.contains('center-service') or it.name.contains('center-common')}) {
+
+    apply plugin: "license"
+
+    def sources = (fileTree('app') + fileTree('etc') + fileTree('config') + fileTree('test'))
+
+    task licenseFormatUi(type:nl.javadude.gradle.plugins.license.License) {
+        source = sources
+    }
+
+    task licenseFormatUiCheck(type:nl.javadude.gradle.plugins.license.License) {
+        source = sources
+        check = true;
+    }
+
+    licenseFormat.dependsOn licenseFormatUi
+    licenseTest.dependsOn licenseFormatUiCheck
+}
+
+configure(subprojects.findAll({ it.name.contains('center-common') or it.name.contains('common-ui') or it.name.contains('proxy-ui')})) {
+    def licenseSourceAdds = fileTree('lib')
+
+    task licenseFormatLib(type: nl.javadude.gradle.plugins.license.License) {
+        source += licenseSourceAdds
+    }
+
+    task licenseFormatLibCheck(type: nl.javadude.gradle.plugins.license.License) {
+        source += licenseSourceAdds
+        check = true
+    }
+
+    licenseFormat.dependsOn licenseFormatLib
+    licenseTest.dependsOn licenseFormatLibCheck
+
+}
+
